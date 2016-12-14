@@ -1,3 +1,22 @@
+/*
+ * ============================================================================
+ *
+ *       Filename:  camera.c
+ *
+ *    Description:  
+ *
+ *        Version:  1.0
+ *        Created:  12/14/2016 03:04:12 PM
+ *       Revision:  none
+ *       Compiler:  gcc
+ *
+ *         Author:  Fang Yuan (yfang@nju.edu.cn)
+ *   Organization:  nju
+ *
+ * ============================================================================
+ */
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,11 +57,12 @@ static void errno_exit (const char * s)
     exit (EXIT_FAILURE);
 }
  
-static int xioctl (int fd,int request,void * arg)
+int xioctl (int fd,int request,void * arg)
 {
     int r;
-    do r = ioctl (fd, request, arg);
-    while (-1 == r && EINTR == errno);
+    do {
+        r = ioctl (fd, request, arg);
+    } while (-1 == r && EINTR == errno);
     return r;
 }
  
@@ -63,9 +83,9 @@ void put_char(int x, int y, int c, unsigned short colidx)
 {
     int i,j,bits;
 
-    for (i = 0; i < font_vga_8x8.height; i++) {
-        bits = font_vga_8x8.data [font_vga_8x8.height * c + i];
-        for (j = 0; j < font_vga_8x8.width; j++, bits <<= 1)
+    for (i = 0; i < font_vga_8x16.height; i++) {
+        bits = font_vga_8x16.data [font_vga_8x16.height * c + i];
+        for (j = 0; j < font_vga_8x16.width; j++, bits <<= 1)
             if (bits & 0x80)
                 pixel (x + j, y + i, colidx);
     }
@@ -73,13 +93,15 @@ void put_char(int x, int y, int c, unsigned short colidx)
 
 void put_string(int x, int y, char *s, unsigned short colidx)
 {
-    int i;
-    for (i = 0; *s; i++, x += font_vga_8x8.width, s++)
-        put_char (x, y, *s, colidx);
+    while(*s) {
+        put_char (x, y, *s++, colidx);
+        x += font_vga_8x16.width;
+    }
 }
 
-static void process_image (const void * p){
-    //ConvertYUVToRGB32
+void process_image (const void * p)
+{
+    //Convert YUV To RGB565
     unsigned char* in=(char*)p;
     int width=320;
     int height=240;
@@ -98,23 +120,23 @@ static void process_image (const void * p){
             y1 = in[j + 2];        
             v = in[j + 3] - 128;        
 
-            r = (298 * y0 + 409 * v + 128) >> 8;
-            g = (298 * y0 - 100 * u - 208 * v + 128) >> 8;
-            b = (298 * y0 + 516 * u + 128) >> 8;
+            r = (298 * y0 + 409 * v + 128);
+            g = (298 * y0 - 100 * u - 208 * v + 128);
+            b = (298 * y0 + 516 * u + 128);
 
-            r >>= 3; r = clip(r, 0, 31);
-            g >>= 2; g = clip(g, 0, 63);
-            b >>= 3; b = clip(b, 0, 31);
+            r >>= (8+3); r = clip(r, 0, 31);
+            g >>= (8+2); g = clip(g, 0, 63);
+            b >>= (8+3); b = clip(b, 0, 31);
 
             color = (r << 11) | (g << 5) | b;
             pixel(x, y, color);
-            r = (298 * y1 + 409 * v + 128) >> 8;
-            g = (298 * y1 - 100 * u - 208 * v + 128) >> 8;
-            b = (298 * y1 + 516 * u + 128) >> 8;
+            r = (298 * y1 + 409 * v + 128);
+            g = (298 * y1 - 100 * u - 208 * v + 128);
+            b = (298 * y1 + 516 * u + 128);
 
-            r >>= 3; r = clip(r, 0, 31);
-            g >>= 2; g = clip(g, 0, 63);
-            b >>= 3; b = clip(b, 0, 31);
+            r >>= (8+3); r = clip(r, 0, 31);
+            g >>= (8+2); g = clip(g, 0, 63);
+            b >>= (8+3); b = clip(b, 0, 31);
 
             color = (r << 11) | (g << 5) | b;
             pixel(x+1, y, color);
@@ -126,12 +148,12 @@ static void process_image (const void * p){
     put_string(10, 10, timebuf, 0xff00);
 }
  
-static int read_frame (void)
+int read_frame (void)
 {
     struct v4l2_buffer buf;
     unsigned int i;
-        static int cnt = 0;
-    CLEAR (buf);
+
+//    CLEAR (buf);
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
  
@@ -151,49 +173,44 @@ static int read_frame (void)
     //assert (buf.field ==V4L2_FIELD_NONE);
     process_image (buffers[buf.index].start);
 
-    printf("%d\n", cnt++);
     if (-1 == xioctl (fd, VIDIOC_QBUF, &buf))
         errno_exit ("VIDIOC_QBUF");
  
     return 1;
 }
  
-static void run (void)
+void run (void)
 {
-    unsigned int count;
-    int frames;
-    frames = 30 * time_in_sec_capture;
- 
     while (1) {
-        for (;;) {
+        for(;;) {
             fd_set fds;
             struct timeval tv;
             int r;
             FD_ZERO (&fds);
             FD_SET (fd, &fds);
-            
+
             tv.tv_sec = 2;
             tv.tv_usec = 0;
- 
+
             r = select (fd + 1, &fds, NULL, NULL, &tv);
- 
+
             if (-1 == r) {
                 if (EINTR == errno)
-                    continue;
+                continue;
                 errno_exit ("select");
             }
- 
+
             if (0 == r) {
                 fprintf (stderr, "select timeout\n");
                 exit (EXIT_FAILURE);
             }
- 
+
             if (read_frame ())
                 break;
         }
     }
 }
- 
+
 static void stop_capturing (void)
 {
     enum v4l2_buf_type type;
@@ -218,13 +235,12 @@ static void start_capturing (void)
  
         if (-1 == xioctl (fd, VIDIOC_QBUF, &buf))
             errno_exit ("VIDIOC_QBUF");
-        }
+    }
  
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
  
     if (-1 == xioctl (fd, VIDIOC_STREAMON, &type))
         errno_exit ("VIDIOC_STREAMON");
-    
 }
  
 static void uninit_device (void)

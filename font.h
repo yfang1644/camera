@@ -1,15 +1,23 @@
 /*
- *  font.h -- `Soft' font definitions
+ * ============================================================================
  *
- *  Created 1995 by Geert Uytterhoeven
+ *       Filename:  font.h
  *
- *  This file is subject to the terms and conditions of the GNU General Public
- *  License.  See the file COPYING in the main directory of this archive
- *  for more details.
+ *    Description:  font.h copy from tslib-1.0.0
+ *
+ *        Version:  1.0
+ *        Created:  12/14/2016 02:54:01 PM
+ *       Revision:  none
+ *       Compiler: 
+ *
+ *         Author:  Fang Yuan (yfang@nju.edu.cn)
+ *   Organization:  nju
+ *
+ * ============================================================================
  */
 
-#ifndef _VIDEO_FONT_H
-#define _VIDEO_FONT_H
+#ifndef _FONT_H
+#define _FONT_H
 
 struct fbcon_font_desc {
     int idx;
@@ -33,4 +41,4 @@ extern struct fbcon_font_desc	font_vga_8x8,
 /* Max. length for the name of a predefined font */
 #define MAX_FONT_NAME	32
 
-#endif /* _VIDEO_FONT_H */
+#endif
