@@ -122,11 +122,11 @@ void process_image(const void * p)
     char timebuf[256];
  
     for(y = 0; y < height; ++y) {
-        for (j = 0, x = 0; j < width * 2 ; j += 4,x += 2) {
-            y0 = in[j];
-            u = in[j + 1] - 128;                
-            y1 = in[j + 2];        
-            v = in[j + 3] - 128;        
+        for (x = 0; x < width; x += 2) {
+            y0 = *in++;
+            u  = (*in++) - 128;
+            y1 = *in++;
+            v  = (*in++) - 128;
 
             r = y0 + ((351 * v) >> 8);
             g = y0 - ((179 * v + 86 * u) >> 8);
@@ -149,7 +149,6 @@ void process_image(const void * p)
             color = (r << 11) | (g << 5) | b;
             pixel(x+1, y, color);
         }
-        in +=istride;
     }
     ticks = time(NULL);
     sprintf(timebuf, "%.24s", ctime(&ticks));
