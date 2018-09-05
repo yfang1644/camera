@@ -41,6 +41,8 @@ struct buffer {
     size_t length;
 };
 
+typedef unsigned int  RGBCOLOR;
+
 static int fd = -1;
 struct buffer * buffers = NULL;
 static unsigned int n_buffers = 0;
@@ -48,7 +50,7 @@ static int time_in_sec_capture=5;
 static int fbfd = -1;
 static struct fb_var_screeninfo vinfo;
 static struct fb_fix_screeninfo finfo;
-static short *fbp=NULL;
+static unsigned char *fbp=NULL;
 static long screensize=0;
  
 static void errno_exit(const char * s)
@@ -70,16 +72,16 @@ static inline int clip(int value, int min, int max) {
     return (value > max ? max : value < min ? min : value);
 }
 
-void pixel(int x, int y, short color)
+void pixel(int x, int y, RGBCOLOR color)
 {
-    long location;
+    unsigned int ptr;
     if((x < vinfo.xres) && (y < vinfo.yres)) {
-        location = y*vinfo.xres + x;
-        *(short *)(fbp + location) = color;
+        ptr = y*finfo.line_length + x*4;
+        *(RGBCOLOR *)(fbp + ptr) = color;
     }
 }
 
-void put_char(int x, int y, int c, unsigned short colidx)
+void put_char(int x, int y, int c, RGBCOLOR colidx)
 {
     int i, j, bits;
 
@@ -93,7 +95,7 @@ void put_char(int x, int y, int c, unsigned short colidx)
     }
 }
 
-void put_string(int x, int y, char *s, unsigned short colidx)
+void put_string(int x, int y, char *s, RGBCOLOR colidx)
 {
     static char oldstr[256];
     int i = 0;
@@ -111,17 +113,17 @@ void process_image(const void * p)
 {
     //Convert YUV To RGB565
     unsigned char* in=(char*)p;
-    int width=320;
-    int height=240;
+    int width=720;
+    int height=480;
     int istride=640;
     unsigned int x,y,j;
     int y0,u,y1,v;
     unsigned int r,g,b;
-    unsigned short color;
+    RGBCOLOR color;
     time_t ticks;
     char timebuf[256];
- 
-    for(y = 0; y < height; ++y) {
+
+    for(y = 0; y < height; y++) {
         for (x = 0; x < width; x += 2) {
             y0 = *in++;
             u  = (*in++) - 128;
@@ -129,30 +131,23 @@ void process_image(const void * p)
             v  = (*in++) - 128;
 
             r = y0 + ((351 * v) >> 8);
-            g = y0 - ((179 * v + 86 * u) >> 8);
-            b = y0 + ((444 * u) >> 8);
 
-            r >>= 3; r = clip(r, 0, 31);
-            g >>= 2; g = clip(g, 0, 63);
-            b >>= 3; b = clip(b, 0, 31);
+            r = clip(r, 0, 255);
 
-            color = (r << 11) | (g << 5) | b;
+            color = (r << 16)| (r << 8) | r;
             pixel(x, y, color);
             r = y1 + ((351 * v) >> 8);
-            g = y1 - ((179 * v + 86 * u) >> 8);
-            b = y1 + ((444 * u) >> 8);
 
-            r >>= 3; r = clip(r, 0, 31);
-            g >>= 2; g = clip(g, 0, 63);
-            b >>= 3; b = clip(b, 0, 31);
+            r = clip(r, 0, 255);
 
-            color = (r << 11) | (g << 5) | b;
+            color = (r << 16)| (r << 8) | r;
             pixel(x+1, y, color);
         }
     }
+
     ticks = time(NULL);
     sprintf(timebuf, "%.24s", ctime(&ticks));
-    put_string(10, 250, timebuf, 0xff00);
+    put_string(10, 490, timebuf, 0x00ff00);
 }
  
 int read_frame(void)
@@ -269,7 +264,7 @@ static void init_mmap(char *dev_name)
     struct v4l2_requestbuffers req;
  
     //mmap framebuffer
-    fbp = (short *)mmap(NULL,screensize, PROT_READ | PROT_WRITE,
+    fbp = (unsigned char *)mmap(NULL,screensize, PROT_READ | PROT_WRITE,
         MAP_SHARED, fbfd, 0);
     if(fbp == NULL) {
         printf("Error: failed to map framebuffer device to memory.\n");
@@ -464,7 +459,7 @@ static const struct option long_options [] = {
  
 int main(int argc,char ** argv)
 {
-    char *dev_name = "/dev/video1";
+    char *dev_name = "/dev/video0";
  
     for(;;) {
         int index;
