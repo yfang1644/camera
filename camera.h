@@ -1,12 +1,12 @@
 /*
  * ============================================================================
  *
- *       Filename:  udpserver.h
+ *       Filename:  camera.h
  *
- *    Description:  network transferring
+ *    Description:  
  *
  *        Version:  1.0
- *        Created:  09/09/2018 12:23:01 PM
+ *        Created:  09/09/2018 12:21:00 PM
  *       Revision:  none
  *       Compiler: 
  *
@@ -16,16 +16,14 @@
  * ============================================================================
  */
 
-#ifndef _UDPSERVER_H
-#define _UDPSERVER_H
+#ifndef _CAMERA_H
+#define _CAMERA_H
 
-#define SERV_PORT	9200
+#define CLEAR(x) memset (&(x), 0, sizeof (x))
 
-struct block {
-	char msg[128];
-	int data;
+struct buffer {
+    void * start;
+    size_t length;
 };
-
-int init_udp(int timeval);
 
 #endif

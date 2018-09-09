@@ -37,13 +37,17 @@ int send_picture(void)
     struct sockaddr_in cliaddr;
     int addrlen, nbyte;
     struct block netmsg;
-    char *buf = ;
+    char buf[4096];
 
     if (sockfd < 0)     return -1;
 
     addrlen = sizeof(cliaddr);
     nbyte = recvfrom(sockfd, &netmsg, sizeof(netmsg), 0,
                      (struct sockaddr *)&cliaddr, &addrlen);
+
+    printf("got connection from %s, port %d\n",
+        inet_ntoa(cliaddr.sin_addr),htons(cliaddr.sin_port));
+
     if(0 == strncmp("request", netmsg.msg, 7)) {
         sendto(sockfd, buf, netmsg.data, 0,
                (struct sockaddr *)&cliaddr, addrlen);
@@ -59,7 +63,7 @@ void sigtimer_handler(int signum)
 }
 
 /* initialize network UDP and alarm */
-int init_udp(void)
+int init_udp(int timeval)
 {
     int addrlen;
     struct sockaddr_in srvaddr;
@@ -79,10 +83,10 @@ int init_udp(void)
         return -2;
 
     /* set alarm */
-    itimer.it_interval.tv_sec = 5;
-    itimer.it_interval.tv_usec = 0;     /* 5 seconds period*/
-    itimer.it_value.tv_sec = 5;
-    itimer.it_value.tv_usec = 0;        /* 5 seconds at next SIGALRM */
+    itimer.it_interval.tv_sec = timeval;     /* period in seconds */
+    itimer.it_interval.tv_usec = 0;
+    itimer.it_value.tv_sec = timeval;
+    itimer.it_value.tv_usec = 0;
     setitimer(ITIMER_REAL, &itimer, NULL);
 
     act.sa_handler = sigtimer_handler;

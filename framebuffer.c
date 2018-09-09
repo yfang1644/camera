@@ -28,14 +28,14 @@
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 
+#include "framebuffer.h"
 #include "camera.h"
 #include "font.h"
 
-static int fd = -1;
 static int fbfd = -1;
 static struct fb_var_screeninfo vinfo;
 static struct fb_fix_screeninfo finfo;
-static unsigned char *fbp=NULL;
+static unsigned char *fbp = NULL;
 static long screensize=0;
  
 void pixel(int x, int y, RGBCOLOR color)
@@ -108,8 +108,13 @@ void init_framebuffer(char *dev_name)
     memset(fbp, 0, screensize);
 }
  
-void close_framebuffer(int fd)
+void close_framebuffer(void)
 {
+	if(-1 == munmap(fbp, screensize)) {
+		printf(" Error: framebuffer device munmap() failed.\n");
+		exit(EXIT_FAILURE) ;
+    }
+
     free(fbp);
-    close(fd);
+    close(fbfd);
 }

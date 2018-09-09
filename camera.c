@@ -29,7 +29,6 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
-#include <linux/fb.h>
 #include <assert.h>
 
 #include "camera.h"
@@ -39,13 +38,9 @@
 
 static int fd = -1;
 struct buffer *buffers = NULL;
+int gindex = -1;
 static unsigned int n_buffers = 0;
 static int time_in_sec_capture=5;
-static int fbfd = -1;
-static struct fb_var_screeninfo vinfo;
-static struct fb_fix_screeninfo finfo;
-static unsigned char *fbp=NULL;
-static long screensize=0;
  
 static void errno_exit(const char * s)
 {
@@ -72,7 +67,6 @@ void process_image(const void * p)
     unsigned char* in=(char*)p;
     int width=720;
     int height=480;
-    int istride=640;
     unsigned int x, y;
     int y0, u, y1, v;
     unsigned int r, g, b;
@@ -104,7 +98,7 @@ void process_image(const void * p)
 
     ticks = time(NULL);
     sprintf(timebuf, "%.24s", ctime(&ticks));
-    put_string(10, 490, timebuf, 0x00ff00);
+    put_string(10, height - 20, timebuf, 0x00ff00);
 }
  
 int read_frame(void)
@@ -130,6 +124,8 @@ int read_frame(void)
     assert(buf.index < n_buffers);
     //printf("v4l2_pix_format->field(%d)\n", buf.field);
     //assert (buf.field ==V4L2_FIELD_NONE);
+
+    gindex = buf.index;
     process_image(buffers[buf.index].start);
 
     if (-1 == xioctl (fd, VIDIOC_QBUF, &buf))
@@ -200,7 +196,7 @@ static void start_capturing(void)
         errno_exit ("VIDIOC_STREAMON");
 }
  
-static void uninit_device (void)
+static void close_camera(void)
 {
     unsigned int i;
  
@@ -208,25 +204,105 @@ static void uninit_device (void)
         if (-1 == munmap (buffers[i].start, buffers[i].length))
             errno_exit("munmap");
 
-    if(-1 == munmap(fbp, screensize)) {
-        printf(" Error: framebuffer device munmap() failed.\n");
-        exit(EXIT_FAILURE) ;
-    }    
     free(buffers);
+
+    if (close(fd) < 0)
+        errno_exit("close");
+    fd = -1;
 }
  
-static void init_mmap(char *dev_name)
+void open_camera(char *dev_name)
+{
+    struct stat st;  
+ 
+    if(-1 == stat (dev_name, &st)) {
+        fprintf(stderr, "Cannot identify '%s': %d, %s\n",dev_name, errno, strerror (errno));
+        exit(EXIT_FAILURE);
+    }
+ 
+    if (!S_ISCHR (st.st_mode)) {
+        fprintf(stderr, "%s is no device\n", dev_name);
+        exit(EXIT_FAILURE);
+    }
+ 
+    //open camera
+    fd = open(dev_name, O_RDWR| O_NONBLOCK, 0);
+ 
+    if(-1 == fd) {
+        fprintf(stderr, "Cannot open '%s': %d, %s/n",dev_name, errno, strerror (errno));
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void camera_format(char *dev_name)
+{
+    struct v4l2_capability cap;
+    struct v4l2_cropcap cropcap;
+    struct v4l2_crop crop;
+    struct v4l2_format fmt;
+ 
+    if (-1 == xioctl (fd, VIDIOC_QUERYCAP, &cap)) {
+        if (EINVAL == errno) {
+            fprintf (stderr, "%s is no V4L2 device\n",dev_name);
+            exit(EXIT_FAILURE);
+        } else {
+            errno_exit("VIDIOC_QUERYCAP");
+        }
+    }
+ 
+    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
+        fprintf (stderr, "%s is no video capture device\n",dev_name);
+        exit(EXIT_FAILURE);
+    }
+ 
+    if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
+        fprintf(stderr, "%s does not support streaming i/o\n",dev_name);
+        exit(EXIT_FAILURE);
+    }
+ 
+    CLEAR(cropcap);
+ 
+    cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+ 
+    if(0 == xioctl(fd, VIDIOC_CROPCAP, &cropcap)) {
+        crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        crop.c = cropcap.defrect;
+ 
+        if(-1 == xioctl(fd, VIDIOC_S_CROP, &crop)) {
+            switch (errno) {
+            case EINVAL:    
+            break;
+            default:
+            break;
+            }
+        }
+    }
+ 
+    CLEAR(fmt);
+ 
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if(-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
+       errno_exit("VIDIOC_G_FMT");
+   
+    printf("width:%d  height:%d\n",fmt.fmt.pix.width, fmt.fmt.pix.height);
+
+    printf("pixelformat = %c%c%c%c\n",
+           fmt.fmt.pix.pixelformat & 0xFF,
+           (fmt.fmt.pix.pixelformat >> 8) & 0xFF,
+           (fmt.fmt.pix.pixelformat >> 16) & 0xFF,
+           (fmt.fmt.pix.pixelformat >> 24) & 0xFF);
+
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
+
+    if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
+        errno_exit("VIDIOC_S_FMT");
+}
+ 
+static void camera_mmap(char *dev_name)
 {
     struct v4l2_requestbuffers req;
  
-    //mmap framebuffer
-    fbp = (unsigned char *)mmap(NULL, screensize, PROT_READ | PROT_WRITE,
-        MAP_SHARED, fbfd, 0);
-    if(fbp == NULL) {
-        printf("Error: failed to map framebuffer device to memory.\n");
-        exit (EXIT_FAILURE) ;
-    }
-    memset(fbp, 0, screensize);
     CLEAR(req);
  
     req.count = 4;
@@ -278,125 +354,13 @@ static void init_mmap(char *dev_name)
     }
 }
  
-static void init_device(char *dev_name)
+void init_camera(char *dev_name)
 {
-    struct v4l2_capability cap;
-    struct v4l2_cropcap cropcap;
-    struct v4l2_crop crop;
-    struct v4l2_format fmt;
- 
-    // Get fixed screen information
-    if (-1==xioctl(fbfd, FBIOGET_FSCREENINFO, &finfo)) {
-        printf("Error reading fixed information.\n");
-        exit (EXIT_FAILURE);
-    }
- 
-        // Get variable screen information
-    if (-1==xioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo)) {
-        printf("Error reading variable information.\n");
-        exit (EXIT_FAILURE);
-    }
-    printf("FB-format %d %d %d\n", vinfo.xres, vinfo.yres, vinfo.bits_per_pixel);
-    screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
- 
-    if (-1 == xioctl (fd, VIDIOC_QUERYCAP, &cap)) {
-        if (EINVAL == errno) {
-            fprintf (stderr, "%s is no V4L2 device\n",dev_name);
-            exit(EXIT_FAILURE);
-        } else {
-            errno_exit("VIDIOC_QUERYCAP");
-        }
-    }
- 
-    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-        fprintf (stderr, "%s is no video capture device\n",dev_name);
-        exit(EXIT_FAILURE);
-    }
- 
-    if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
-        fprintf(stderr, "%s does not support streaming i/o\n",dev_name);
-        exit(EXIT_FAILURE);
-    }
- 
-    CLEAR(cropcap);
- 
-    cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
- 
-    if(0 == xioctl (fd, VIDIOC_CROPCAP, &cropcap)) {
-        crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        crop.c = cropcap.defrect;
- 
-        if(-1 == xioctl (fd, VIDIOC_S_CROP, &crop)) {
-            switch (errno) {
-            case EINVAL:    
-            break;
-            default:
-            break;
-            }
-        }
-    }
- 
-    CLEAR(fmt);
- 
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if(-1 == xioctl(fd,VIDIOC_G_FMT,&fmt))
-       errno_exit("VIDIOC_G_FMT");
-   
-    printf("width:%d  height:%d\n",fmt.fmt.pix.width,fmt.fmt.pix.height);
-
-    printf("pixelformat = %c%c%c%c\n",
-           fmt.fmt.pix.pixelformat & 0xFF,
-           (fmt.fmt.pix.pixelformat >> 8) & 0xFF,
-           (fmt.fmt.pix.pixelformat >> 16) & 0xFF,
-           (fmt.fmt.pix.pixelformat >> 24) & 0xFF);
-
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-    fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
-
-    if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
-        errno_exit("VIDIOC_S_FMT");
- 
-    init_mmap(dev_name);
+    open_camera(dev_name);
+    camera_format(dev_name);
+    camera_mmap(dev_name);
 }
- 
-static void close_device(void)
-{
-    if (close(fd) < 0)
-        errno_exit("close");
-    fd = -1;
-    close(fbfd);
-}
- 
-static void open_device(char *dev_name)
-{
-    struct stat st;  
- 
-    if(-1 == stat (dev_name, &st)) {
-        fprintf(stderr, "Cannot identify '%s': %d, %s\n",dev_name, errno, strerror (errno));
-        exit(EXIT_FAILURE);
-    }
- 
-    if (!S_ISCHR (st.st_mode)) {
-        fprintf(stderr, "%s is no device\n", dev_name);
-        exit(EXIT_FAILURE);
-    }
- 
-    //open framebuffer
-    fbfd = open("/dev/fb0", O_RDWR);
-    if(fbfd < 0) {
-        printf("Error: cannot open framebuffer device.\n");
-        exit(EXIT_FAILURE);
-    }
- 
-    //open camera
-    fd = open(dev_name, O_RDWR| O_NONBLOCK, 0);
- 
-    if(-1 == fd) {
-        fprintf(stderr, "Cannot open '%s': %d, %s/n",dev_name, errno, strerror (errno));
-        exit(EXIT_FAILURE);
-    }
-}
- 
+
 static void usage(FILE * fp,int argc,char ** argv)
 {
     fprintf(fp,
@@ -423,7 +387,7 @@ int main(int argc,char ** argv)
     int index, c;
  
     for(;;) {
-        c = getopt_long (argc, argv,short_options, long_options,&index);
+        c = getopt_long(argc, argv, short_options, long_options, &index);
         if(-1 == c)
             break;
  
@@ -446,12 +410,12 @@ int main(int argc,char ** argv)
         }
     }
  
-    open_device(dev_name);
-    init_device(dev_name);
+    init_camera(dev_name);
+    init_framebuffer("/dev/fb0");
     start_capturing();
     run();
     stop_capturing();
-    uninit_device();
-    close_device();
+    close_camera();
+    close_framebuffer();
     exit(EXIT_SUCCESS);
 }

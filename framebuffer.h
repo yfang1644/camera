@@ -22,7 +22,7 @@
 typedef unsigned int   RGBCOLOR;
 
 void init_framebuffer(char *dev_name);
-void close_framebuffer(int fd);
+void close_framebuffer(void);
 
 void pixel(int x, int y, RGBCOLOR color);
 void put_string(int x, int y, char *s, RGBCOLOR colidx);
