@@ -16,7 +16,6 @@
  * ============================================================================
  */
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,19 +31,14 @@
 #include <linux/videodev2.h>
 #include <linux/fb.h>
 #include <assert.h>
-#define CLEAR(x) memset (&(x), 0, sizeof (x))
 
+#include "camera.h"
+#include "framebuffer.h"
 #include "font.h"
-
-struct buffer {
-    void * start;
-    size_t length;
-};
-
-typedef unsigned int  RGBCOLOR;
+#include "udpserver.h"
 
 static int fd = -1;
-struct buffer * buffers = NULL;
+struct buffer *buffers = NULL;
 static unsigned int n_buffers = 0;
 static int time_in_sec_capture=5;
 static int fbfd = -1;
@@ -59,7 +53,7 @@ static void errno_exit(const char * s)
     exit (EXIT_FAILURE);
 }
  
-int xioctl(int fd,int request,void * arg)
+int xioctl(int fd, int request, void * arg)
 {
     int r;
     do {
@@ -72,43 +66,6 @@ static inline int clip(int value, int min, int max) {
     return (value > max ? max : value < min ? min : value);
 }
 
-void pixel(int x, int y, RGBCOLOR color)
-{
-    unsigned int ptr;
-    if((x < vinfo.xres) && (y < vinfo.yres)) {
-        ptr = y*finfo.line_length + x*4;
-        *(RGBCOLOR *)(fbp + ptr) = color;
-    }
-}
-
-void put_char(int x, int y, int c, RGBCOLOR colidx)
-{
-    int i, j, bits;
-
-    for(i = 0; i < font_vga_8x16.height; i++) {
-        bits = font_vga_8x16.data [font_vga_8x16.height * c + i];
-        for (j = 0; j < font_vga_8x16.width; j++, bits <<= 1)
-            if (bits & 0x80)   // TODO: 0x80 should replaced by 2^width
-                pixel(x + j, y + i, colidx);
-            else
-                pixel(x + j, y + i, 0);
-    }
-}
-
-void put_string(int x, int y, char *s, RGBCOLOR colidx)
-{
-    static char oldstr[256];
-    int i = 0;
-
-    do {
-        if(oldstr[i] != s[i])
-            put_char(x, y, s[i], colidx);
-        oldstr[i] = s[i];
-        x += font_vga_8x16.width;
-        i++;
-    } while (s[i] != '\0');
-}
-
 void process_image(const void * p)
 {
     //Convert YUV To RGB565
@@ -116,9 +73,9 @@ void process_image(const void * p)
     int width=720;
     int height=480;
     int istride=640;
-    unsigned int x,y,j;
-    int y0,u,y1,v;
-    unsigned int r,g,b;
+    unsigned int x, y;
+    int y0, u, y1, v;
+    unsigned int r, g, b;
     RGBCOLOR color;
     time_t ticks;
     char timebuf[256];
@@ -134,7 +91,7 @@ void process_image(const void * p)
 
             r = clip(r, 0, 255);
 
-            color = (r << 16)| (r << 8) | r;
+            color = (r << 16)| (r << 8) | r;  /*gray, r=g=b */
             pixel(x, y, color);
             r = y1 + ((351 * v) >> 8);
 
@@ -227,7 +184,7 @@ static void start_capturing(void)
  
     for(i = 0; i < n_buffers; ++i) {
         struct v4l2_buffer buf;
-        CLEAR (buf);
+        CLEAR(buf);
  
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buf.memory = V4L2_MEMORY_MMAP;
@@ -258,13 +215,12 @@ static void uninit_device (void)
     free(buffers);
 }
  
- 
 static void init_mmap(char *dev_name)
 {
     struct v4l2_requestbuffers req;
  
     //mmap framebuffer
-    fbp = (unsigned char *)mmap(NULL,screensize, PROT_READ | PROT_WRITE,
+    fbp = (unsigned char *)mmap(NULL, screensize, PROT_READ | PROT_WRITE,
         MAP_SHARED, fbfd, 0);
     if(fbp == NULL) {
         printf("Error: failed to map framebuffer device to memory.\n");
@@ -301,7 +257,7 @@ static void init_mmap(char *dev_name)
     for(n_buffers = 0; n_buffers < req.count; ++n_buffers) {
         struct v4l2_buffer buf;
 
-        CLEAR (buf);
+        CLEAR(buf);
 
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buf.memory = V4L2_MEMORY_MMAP;
@@ -311,7 +267,11 @@ static void init_mmap(char *dev_name)
             errno_exit("VIDIOC_QUERYBUF");
 
         buffers[n_buffers].length = buf.length;
-        buffers[n_buffers].start = mmap (NULL,buf.length,PROT_READ | PROT_WRITE ,MAP_SHARED,fd, buf.m.offset);
+        buffers[n_buffers].start = mmap(NULL, buf.length,
+									    PROT_READ | PROT_WRITE,
+										MAP_SHARED,
+										fd,
+										buf.m.offset);
  
         if (MAP_FAILED == buffers[n_buffers].start)
             errno_exit("mmap");
@@ -376,7 +336,7 @@ static void init_device(char *dev_name)
         }
     }
  
-    CLEAR (fmt);
+    CLEAR(fmt);
  
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if(-1 == xioctl(fd,VIDIOC_G_FMT,&fmt))
@@ -442,7 +402,7 @@ static void usage(FILE * fp,int argc,char ** argv)
     fprintf(fp,
             "Usage: %s [options]\n\n"
             "Options:\n"
-            "-d | --device name Video device name [/dev/video]\n"
+            "-d | --device name Video device name [/dev/video0]\n"
             "-h | --help Print this message\n"
             "-t | --how long will display in seconds\n"
             "",
@@ -460,30 +420,26 @@ static const struct option long_options [] = {
 int main(int argc,char ** argv)
 {
     char *dev_name = "/dev/video0";
+    int index, c;
  
     for(;;) {
-        int index;
-        int c;
-
         c = getopt_long (argc, argv,short_options, long_options,&index);
         if(-1 == c)
             break;
  
         switch(c) {
         case 0:
-        break;
+			break;
  
         case 'd':
             dev_name = optarg;
-        break;
+			break;
  
-        case 'h':
-            usage(stdout, argc, argv);
-            exit(EXIT_SUCCESS);
         case 't':
             time_in_sec_capture = atoi(optarg);
             break;
  
+        case 'h':
         default:
             usage(stderr, argc, argv);
             exit(EXIT_FAILURE);
