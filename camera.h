@@ -19,7 +19,7 @@
 #ifndef _CAMERA_H
 #define _CAMERA_H
 
-#define CLEAR(x) memset (&(x), 0, sizeof (x))
+#define CLEAR(x)    memset(&(x), 0, sizeof(x))
 
 struct buffer {
     void * start;

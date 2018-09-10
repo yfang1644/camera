@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -40,7 +41,6 @@ static int fd = -1;
 struct buffer *buffers = NULL;
 int gindex = -1;
 static unsigned int n_buffers = 0;
-static int time_in_sec_capture=5;
  
 static void errno_exit(const char * s)
 {
@@ -61,12 +61,42 @@ static inline int clip(int value, int min, int max) {
     return (value > max ? max : value < min ? min : value);
 }
 
-void process_image(const void * p)
+int save_image(const void *p)
+{
+    int width = 720;
+    int height = 480;
+    int fsize;
+    struct tm now;
+    time_t ticks;
+    char timebuf[256];
+    int fdimg;
+
+    ticks = time(NULL);
+    localtime_r(&ticks, &now);
+    fsize = width * height * 4/2;
+
+    /* save file to /mnt/usb1 */
+    sprintf(timebuf, "/mnt/usb1/%04d-%02d-%02d-%02d-%02d-%02d.yuv",
+            now.tm_year+1900, now.tm_mon+1, now.tm_mday,
+            now.tm_hour, now.tm_min, now.tm_sec);
+
+    fdimg = open(timebuf, O_RDWR|O_CREAT, 0644);
+    if (fdimg < 0)
+        return -1;
+
+    write(fdimg, timebuf, 128);
+    write(fdimg, p, fsize);
+    close(fdimg);
+
+    return 0;
+}
+
+int process_image(const void *p)
 {
     //Convert YUV To RGB565
     unsigned char* in=(char*)p;
-    int width=720;
-    int height=480;
+    int width = 720;
+    int height = 480;
     unsigned int x, y;
     int y0, u, y1, v;
     unsigned int r, g, b;
@@ -99,14 +129,16 @@ void process_image(const void * p)
     ticks = time(NULL);
     sprintf(timebuf, "%.24s", ctime(&ticks));
     put_string(10, height - 20, timebuf, 0x00ff00);
+
+    return 0;
 }
  
 int read_frame(void)
 {
     struct v4l2_buffer buf;
-    unsigned int i;
+    static int count = 0;
 
-//    CLEAR (buf);
+//  CLEAR(buf);
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
  
@@ -128,13 +160,18 @@ int read_frame(void)
     gindex = buf.index;
     process_image(buffers[buf.index].start);
 
+    if (0 == (count % 30)) {
+        save_image(buffers[buf.index].start);
+    }
+    count++;
+
     if (-1 == xioctl (fd, VIDIOC_QBUF, &buf))
         errno_exit("VIDIOC_QBUF");
  
     return 1;
 }
  
-void run(void)
+void select_run(int itimeval)
 {
     fd_set fds;
     struct timeval tv;
@@ -161,6 +198,34 @@ void run(void)
         }
 
         read_frame();
+        sleep(itimeval);
+    }
+}
+
+void capture(int signum)
+{
+    read_frame();
+}
+
+void sleep_run(int itimeval)
+{
+    struct itimerval itimer;
+    struct sigaction act;
+
+    /* set alarm */
+    itimer.it_interval.tv_sec = itimeval;     /* period in seconds */
+    itimer.it_interval.tv_usec = 0;
+    itimer.it_value.tv_sec = itimeval;
+    itimer.it_value.tv_usec = 0;
+    setitimer(ITIMER_REAL, &itimer, NULL);
+
+    act.sa_handler = capture;
+    sigemptyset(&act.sa_mask);
+    act.sa_flags=0;
+    sigaction(SIGALRM, &act, NULL);
+
+    while(1) {
+        sleep(600);
     }
 }
 
@@ -384,6 +449,7 @@ static const struct option long_options [] = {
 int main(int argc,char ** argv)
 {
     char *dev_name = "/dev/video0";
+    int time_in_sec_capture = 2;
     int index, c;
  
     for(;;) {
@@ -413,7 +479,9 @@ int main(int argc,char ** argv)
     init_camera(dev_name);
     init_framebuffer("/dev/fb0");
     start_capturing();
-    run();
+    /* use select_run or sleep_run */
+    select_run(time_in_sec_capture);
+    //sleep_run(time_in_sec_capture);
     stop_capturing();
     close_camera();
     close_framebuffer();

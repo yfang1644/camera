@@ -59,7 +59,7 @@ int send_picture(void)
 void sigtimer_handler(int signum)
 {
     printf("ALARM\n");
-    send_picture();
+    //send_picture();
 }
 
 /* initialize network UDP and alarm */
